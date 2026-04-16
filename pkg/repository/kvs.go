@@ -89,7 +89,7 @@ func (r *kvsRepository) GetAuthorizeCodeSession(ctx context.Context, code string
 		return nil, err
 	}
 	fositeReq := req.ToFositeReq()
-	fositeReq.SetSession(sess)
+	restoreSession(fositeReq, req.SessionData, sess)
 	return fositeReq, nil
 }
 
@@ -107,7 +107,7 @@ func (r *kvsRepository) GetAccessTokenSession(ctx context.Context, signature str
 		return nil, err
 	}
 	fositeReq := req.ToFositeReq()
-	fositeReq.SetSession(sess)
+	restoreSession(fositeReq, req.SessionData, sess)
 	return fositeReq, nil
 }
 
@@ -125,7 +125,7 @@ func (r *kvsRepository) GetRefreshTokenSession(ctx context.Context, signature st
 		return nil, err
 	}
 	fositeReq := req.ToFositeReq()
-	fositeReq.SetSession(sess)
+	restoreSession(fositeReq, req.SessionData, sess)
 	return fositeReq, nil
 }
 
@@ -200,7 +200,7 @@ func (r *kvsRepository) GetPKCERequestSession(ctx context.Context, signature str
 		return nil, err
 	}
 	fositeReq := req.ToFositeReq()
-	fositeReq.SetSession(sess)
+	restoreSession(fositeReq, req.SessionData, sess)
 	return fositeReq, nil
 }
 
