@@ -197,6 +197,113 @@ func TestProxyRouter_HeaderMapping(t *testing.T) {
 	}
 }
 
+func TestProxyRouter_HeaderMapping_FallbackToTopLevelClaims(t *testing.T) {
+	privateKey, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	cases := []struct {
+		name            string
+		headerMapping   map[string]string
+		claims          jwt.MapClaims
+		expectedHeaders map[string]string
+		missingHeaders  []string
+	}{
+		{
+			name:          "top-level claim when userinfo is absent",
+			headerMapping: map[string]string{"/email": "X-Forwarded-Email"},
+			claims: jwt.MapClaims{
+				"sub":   "test-user",
+				"email": "user@example.com",
+				"exp":   time.Now().Add(time.Hour).Unix(),
+				"iat":   time.Now().Unix(),
+			},
+			expectedHeaders: map[string]string{
+				"X-Forwarded-Email": "user@example.com",
+			},
+		},
+		{
+			name:          "userinfo takes precedence over top-level claim",
+			headerMapping: map[string]string{"/email": "X-Forwarded-Email"},
+			claims: jwt.MapClaims{
+				"sub":      "test-user",
+				"email":    "toplevel@example.com",
+				"userinfo": map[string]any{"email": "userinfo@example.com"},
+				"exp":      time.Now().Add(time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+			},
+			expectedHeaders: map[string]string{
+				"X-Forwarded-Email": "userinfo@example.com",
+			},
+		},
+		{
+			name:          "multiple top-level claims without userinfo",
+			headerMapping: map[string]string{"/email": "X-Forwarded-Email", "/name": "X-Forwarded-Name"},
+			claims: jwt.MapClaims{
+				"sub":   "test-user",
+				"email": "user@example.com",
+				"name":  "John Doe",
+				"exp":   time.Now().Add(time.Hour).Unix(),
+				"iat":   time.Now().Unix(),
+			},
+			expectedHeaders: map[string]string{
+				"X-Forwarded-Email": "user@example.com",
+				"X-Forwarded-Name":  "John Doe",
+			},
+		},
+		{
+			name:          "missing claim in both userinfo and top-level",
+			headerMapping: map[string]string{"/email": "X-Forwarded-Email", "/missing": "X-Missing"},
+			claims: jwt.MapClaims{
+				"sub":   "test-user",
+				"email": "user@example.com",
+				"exp":   time.Now().Add(time.Hour).Unix(),
+				"iat":   time.Now().Unix(),
+			},
+			expectedHeaders: map[string]string{
+				"X-Forwarded-Email": "user@example.com",
+			},
+			missingHeaders: []string{"X-Missing"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			receivedHeaders := http.Header{}
+			proxyHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for k, v := range r.Header {
+					receivedHeaders[k] = v
+				}
+				w.WriteHeader(http.StatusOK)
+			})
+
+			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, tt.headerMapping)
+			require.NoError(t, err)
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			proxyRouter.SetupRoutes(router)
+
+			token, err := createJWT(privateKey, tt.claims)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest("GET", "/test", nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+token)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code)
+			for header, expected := range tt.expectedHeaders {
+				assert.Equal(t, expected, receivedHeaders.Get(header), "header %s mismatch", header)
+			}
+			for _, header := range tt.missingHeaders {
+				assert.Empty(t, receivedHeaders.Get(header), "header %s should not be set", header)
+			}
+		})
+	}
+}
+
 func TestProxyRouter_ProtectedResourceTrailingSlash(t *testing.T) {
 	_, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)

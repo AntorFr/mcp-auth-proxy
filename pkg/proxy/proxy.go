@@ -93,26 +93,30 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 
 	if len(p.headerMapping) > 0 {
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			source := map[string]any(claims)
 			if userinfo, exists := claims["userinfo"]; exists {
-				for pointer, headerName := range p.headerMapping {
-					val, err := jsonpointer.Get(userinfo, pointer)
-					if err != nil {
-						continue
-					}
-					switch v := val.(type) {
-					case string:
-						c.Request.Header.Set(headerName, v)
-					case []any:
-						var parts []string
-						for _, item := range v {
-							if s, ok := item.(string); ok {
-								parts = append(parts, s)
-							}
+				if ui, ok := userinfo.(map[string]any); ok {
+					source = ui
+				}
+			}
+			for pointer, headerName := range p.headerMapping {
+				val, err := jsonpointer.Get(source, pointer)
+				if err != nil {
+					continue
+				}
+				switch v := val.(type) {
+				case string:
+					c.Request.Header.Set(headerName, v)
+				case []any:
+					var parts []string
+					for _, item := range v {
+						if s, ok := item.(string); ok {
+							parts = append(parts, s)
 						}
-						c.Request.Header.Set(headerName, strings.Join(parts, ","))
-					default:
-						c.Request.Header.Set(headerName, fmt.Sprintf("%v", v))
 					}
+					c.Request.Header.Set(headerName, strings.Join(parts, ","))
+				default:
+					c.Request.Header.Set(headerName, fmt.Sprintf("%v", v))
 				}
 			}
 		}
