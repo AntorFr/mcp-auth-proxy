@@ -403,6 +403,7 @@ func TestNewRootCommand_HTTPStreamingOnlyFlag(t *testing.T) {
 		proxyTarget []string,
 		httpStreamingOnly bool,
 		headerMapping map[string]string,
+		headerMappingBase string,
 	) error {
 		streamingOnly = httpStreamingOnly
 		receivedTargets = proxyTarget
@@ -467,6 +468,7 @@ func TestNewRootCommand_HTTPStreamingOnlyFromEnv(t *testing.T) {
 		proxyTarget []string,
 		httpStreamingOnly bool,
 		headerMapping map[string]string,
+		headerMappingBase string,
 	) error {
 		streamingOnly = httpStreamingOnly
 		return nil
