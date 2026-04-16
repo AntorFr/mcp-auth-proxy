@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/handler/oauth2"
@@ -29,10 +30,12 @@ type AuthorizeRequestStorage interface {
 	DeleteAuthorizeRequest(ctx context.Context, requestID string) error
 }
 
-func restoreSession(req *fosite.Request, sessionData json.RawMessage, sess fosite.Session) {
+func restoreSession(req *fosite.Request, sessionData json.RawMessage, sess fosite.Session) error {
 	if len(sessionData) > 0 && sess != nil {
-		if json.Unmarshal(sessionData, sess) == nil {
-			req.SetSession(sess)
+		if err := json.Unmarshal(sessionData, sess); err != nil {
+			return fmt.Errorf("failed to unmarshal session data: %w", err)
 		}
+		req.SetSession(sess)
 	}
+	return nil
 }

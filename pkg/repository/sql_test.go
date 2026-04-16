@@ -98,7 +98,7 @@ func TestSQLRepositorySessionPersistence(t *testing.T) {
 	}
 }
 
-func TestSQLRepositorySessionPersistence_BackwardsCompatible(t *testing.T) {
+func TestSQLRepositorySessionPersistence_NilSessionStored(t *testing.T) {
 	repo, err := NewSQLRepository("sqlite", "file::memory:?cache=shared&_busy_timeout=5000")
 	if err != nil {
 		t.Fatalf("failed to create sql repository: %v", err)
@@ -112,7 +112,6 @@ func TestSQLRepositorySessionPersistence_BackwardsCompatible(t *testing.T) {
 		RedirectURIs: []string{"https://example.com/callback"},
 	}
 
-	// Simulate old data without session
 	req := &fosite.Request{
 		ID:             "req-old",
 		RequestedAt:    time.Now().UTC().Round(time.Second),
@@ -130,9 +129,8 @@ func TestSQLRepositorySessionPersistence_BackwardsCompatible(t *testing.T) {
 		t.Fatalf("GetAuthorizeCodeSession failed: %v", err)
 	}
 
-	// Session should be nil (no data to restore, no fallback)
 	if result.GetSession() != nil {
-		t.Fatalf("expected nil session for old data, got %v", result.GetSession())
+		t.Fatalf("expected nil session when no session was stored, got %v", result.GetSession())
 	}
 }
 

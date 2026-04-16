@@ -356,7 +356,9 @@ func unmarshalRequest(data []byte, sess fosite.Session) (fosite.Requester, error
 		return nil, fmt.Errorf("failed to unmarshal request: %w", err)
 	}
 	fositeReq := req.ToFositeReq()
-	restoreSession(fositeReq, req.SessionData, sess)
+	if err := restoreSession(fositeReq, req.SessionData, sess); err != nil {
+		return nil, err
+	}
 	return fositeReq, nil
 }
 
