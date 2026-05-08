@@ -25,6 +25,12 @@ func generateRSAKeyPair() (*rsa.PrivateKey, *rsa.PublicKey, error) {
 }
 
 func createJWT(privateKey *rsa.PrivateKey, claims jwt.MapClaims) (string, error) {
+	if _, ok := claims["iss"]; !ok {
+		claims["iss"] = "https://example.com"
+	}
+	if _, ok := claims["aud"]; !ok {
+		claims["aud"] = "https://example.com"
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	return token.SignedString(privateKey)
 }
@@ -35,6 +41,57 @@ func createDummyBackendServer() *httptest.Server {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"message": "Hello from backend", "method": "%s", "path": "%s"}`, r.Method, r.URL.Path)
 	}))
+}
+
+func TestProxyRouter_RejectsWrongIssuerOrAudience(t *testing.T) {
+	privateKey, publicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	proxyRouter, err := NewProxyRouter("https://example.com", http.NotFoundHandler(), publicKey, http.Header{}, false, false, nil, "/userinfo")
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxyRouter.SetupRoutes(router)
+
+	cases := []struct {
+		name   string
+		claims jwt.MapClaims
+	}{
+		{
+			name: "wrong issuer",
+			claims: jwt.MapClaims{
+				"sub": "test-user",
+				"iss": "https://issuer.example.com",
+				"aud": "https://example.com",
+				"exp": time.Now().Add(time.Hour).Unix(),
+			},
+		},
+		{
+			name: "wrong audience",
+			claims: jwt.MapClaims{
+				"sub": "test-user",
+				"iss": "https://example.com",
+				"aud": "https://other.example.com",
+				"exp": time.Now().Add(time.Hour).Unix(),
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := createJWT(privateKey, tt.claims)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest(http.MethodGet, "/test-endpoint", nil)
+			require.NoError(t, err)
+			req.Header.Set("Authorization", "Bearer "+token)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	}
 }
 
 func TestProxyRouter_HandleProxy_ValidToken(t *testing.T) {

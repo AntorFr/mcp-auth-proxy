@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -124,6 +125,24 @@ func TestRun_PassesHTTPStreamingOnlyToProxyRouter(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to create proxy router")
 	require.True(t, streamingOnlyReceived, "httpStreamingOnly should be forwarded to proxy router")
+}
+
+func TestSessionCookieSecure(t *testing.T) {
+	cases := []struct {
+		externalURL string
+		want        bool
+	}{
+		{externalURL: "https://example.com", want: true},
+		{externalURL: "http://example.com", want: false},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.externalURL, func(t *testing.T) {
+			parsedURL, err := url.Parse(tt.externalURL)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, sessionCookieSecure(parsedURL))
+		})
+	}
 }
 
 func TestUserInfoFieldsFromConfig(t *testing.T) {

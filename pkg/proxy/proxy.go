@@ -73,12 +73,13 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 	}
 	bearerToken := strings.TrimPrefix(authHeader, "Bearer ")
 
-	token, err := jwt.Parse(bearerToken, func(token *jwt.Token) (interface{}, error) {
+	claims := jwt.MapClaims{}
+	token, err := jwt.ParseWithClaims(bearerToken, claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return p.publicKey, nil
-	})
+	}, jwt.WithIssuer(p.externalURL), jwt.WithAudience(p.externalURL))
 
 	if err != nil || !token.Valid {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
@@ -106,36 +107,34 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 	}
 
 	if len(p.headerMapping) > 0 {
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			var source any = map[string]any(claims)
-			if p.headerMappingBase != "/" {
-				val, err := jsonpointer.Get(source, p.headerMappingBase)
-				if err != nil {
-					source = nil
-				} else {
-					source = val
-				}
+		var source any = map[string]any(claims)
+		if p.headerMappingBase != "/" {
+			val, err := jsonpointer.Get(source, p.headerMappingBase)
+			if err != nil {
+				source = nil
+			} else {
+				source = val
 			}
-			if source != nil {
-				for pointer, headerName := range p.headerMapping {
-					val, err := jsonpointer.Get(source, pointer)
-					if err != nil {
-						continue
-					}
-					switch v := val.(type) {
-					case string:
-						c.Request.Header.Set(headerName, v)
-					case []any:
-						var parts []string
-						for _, item := range v {
-							if s, ok := item.(string); ok {
-								parts = append(parts, s)
-							}
+		}
+		if source != nil {
+			for pointer, headerName := range p.headerMapping {
+				val, err := jsonpointer.Get(source, pointer)
+				if err != nil {
+					continue
+				}
+				switch v := val.(type) {
+				case string:
+					c.Request.Header.Set(headerName, v)
+				case []any:
+					var parts []string
+					for _, item := range v {
+						if s, ok := item.(string); ok {
+							parts = append(parts, s)
 						}
-						c.Request.Header.Set(headerName, strings.Join(parts, ","))
-					default:
-						c.Request.Header.Set(headerName, fmt.Sprintf("%v", v))
 					}
+					c.Request.Header.Set(headerName, strings.Join(parts, ","))
+				default:
+					c.Request.Header.Set(headerName, fmt.Sprintf("%v", v))
 				}
 			}
 		}

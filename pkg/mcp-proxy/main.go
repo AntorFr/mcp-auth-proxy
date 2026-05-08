@@ -326,7 +326,7 @@ func Run(
 		Path:     "/",
 		MaxAge:   600,
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   sessionCookieSecure(parsedExternalURL),
 		SameSite: http.SameSiteLaxMode,
 	})
 	router.Use(sessions.Sessions("session", store))
@@ -536,6 +536,10 @@ func Run(
 	stop()
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+func sessionCookieSecure(externalURL *url.URL) bool {
+	return externalURL.Scheme == "https"
 }
 
 // userInfoFieldsFromConfig extracts the top-level userinfo keys referenced

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"math/big"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -53,8 +54,8 @@ func NewIDPRouter(
 		RefreshTokenScopes:             []string{},
 		AccessTokenIssuer:              externalURL,
 		EnforcePKCE:                    false,
-		EnforcePKCEForPublicClients:    false,
-		EnablePKCEPlainChallengeMethod: true,
+		EnforcePKCEForPublicClients:    true,
+		EnablePKCEPlainChallengeMethod: false,
 		ScopeStrategy:                  fosite.HierarchicScopeStrategy,
 		MinParameterEntropy:            fosite.MinParameterEntropy,
 		ClientSecretsHasher:            hasher,
@@ -101,11 +102,13 @@ const (
 	RegistrationEndpoint             = "/.idp/register"
 	OauthAuthorizationServerEndpoint = "/.well-known/oauth-authorization-server"
 	JWKSEndpoint                     = "/.well-known/jwks.json"
+	sessionKeyAuthorizeRequestIDs    = "idp_authorize_request_ids"
 )
 
 func (a *IDPRouter) SetupRoutes(router gin.IRouter) {
 	router.GET(AuthorizationEndpoint, a.handleAuth)
-	router.GET(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturn)
+	router.GET(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturnForm)
+	router.POST(AuthorizationReturnEndpoint, a.authRouter.RequireAuth(), a.handleAuthorizationReturn)
 	router.POST(TokenEndpoint, a.handleToken)
 	router.POST(IntrospectionEndpoint, a.handleIntrospect)
 	router.POST(RegistrationEndpoint, a.handleRegister)
@@ -143,12 +146,35 @@ func (a *IDPRouter) handleAuth(c *gin.Context) {
 		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
 		return
 	}
+	session := sessions.Default(c)
+	addAuthorizeRequestID(session, ar.GetID())
+	if err := session.Save(); err != nil {
+		a.logger.Error("Failed to save authorize request in session", zap.Error(err))
+		_ = a.repo.DeleteAuthorizeRequest(ctx, ar.GetID())
+		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
+		return
+	}
 	c.Redirect(302, strings.ReplaceAll(AuthorizationReturnEndpoint, ":ar_id", ar.GetID()))
+}
+
+func (a *IDPRouter) handleAuthorizationReturnForm(c *gin.Context) {
+	arID := c.Param("ar_id")
+	if !hasAuthorizeRequestID(sessions.Default(c), arID) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid authorization session"})
+		return
+	}
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(`<!doctype html><html><body><form method="post"><button type="submit">Authorize</button></form></body></html>`))
 }
 
 func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 	ctx := c.Request.Context()
 	arID := c.Param("ar_id")
+	session := sessions.Default(c)
+	if !hasAuthorizeRequestID(session, arID) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid authorization session"})
+		return
+	}
 
 	ar, err := a.repo.GetAuthorizeRequest(ctx, arID)
 	if err != nil {
@@ -156,13 +182,17 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 		c.AbortWithStatusJSON(500, gin.H{"error": "Internal Server Error"})
 		return
 	}
+	defer func() {
+		if err := a.repo.DeleteAuthorizeRequest(ctx, arID); err != nil {
+			a.logger.Error("Failed to delete authorize requester", zap.Error(err))
+		}
+	}()
 
 	for _, scope := range ar.GetRequestedScopes() {
 		ar.GrantScope(scope)
 	}
 	ar.GrantAudience(a.externalURL)
 
-	session := sessions.Default(c)
 	subject := "user"
 	if userID, ok := session.Get(auth.SessionKeyUserID).(string); ok && userID != "" {
 		subject = userID
@@ -186,7 +216,61 @@ func (a *IDPRouter) handleAuthorizationReturn(c *gin.Context) {
 		return
 	}
 
+	removeAuthorizeRequestID(session, arID)
+	if err := session.Save(); err != nil {
+		a.logger.Error("Failed to remove authorize request from session", zap.Error(err))
+		a.provider.WriteAuthorizeError(ctx, c.Writer, ar, fosite.ErrServerError.WithWrap(err))
+		return
+	}
+
 	a.provider.WriteAuthorizeResponse(ctx, c.Writer, ar, response)
+}
+
+func authorizeRequestIDs(session sessions.Session) []string {
+	value, ok := session.Get(sessionKeyAuthorizeRequestIDs).(string)
+	if !ok || value == "" {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(value), &ids); err != nil {
+		return nil
+	}
+	return ids
+}
+
+func addAuthorizeRequestID(session sessions.Session, arID string) {
+	ids := authorizeRequestIDs(session)
+	if hasAuthorizeRequestID(session, arID) {
+		return
+	}
+	ids = append(ids, arID)
+	data, _ := json.Marshal(ids)
+	session.Set(sessionKeyAuthorizeRequestIDs, string(data))
+}
+
+func hasAuthorizeRequestID(session sessions.Session, arID string) bool {
+	for _, id := range authorizeRequestIDs(session) {
+		if id == arID {
+			return true
+		}
+	}
+	return false
+}
+
+func removeAuthorizeRequestID(session sessions.Session, arID string) {
+	ids := authorizeRequestIDs(session)
+	remaining := ids[:0]
+	for _, id := range ids {
+		if id != arID {
+			remaining = append(remaining, id)
+		}
+	}
+	if len(remaining) == 0 {
+		session.Delete(sessionKeyAuthorizeRequestIDs)
+		return
+	}
+	data, _ := json.Marshal(remaining)
+	session.Set(sessionKeyAuthorizeRequestIDs, string(data))
 }
 
 func (a *IDPRouter) handleToken(c *gin.Context) {
@@ -375,7 +459,7 @@ func (a *IDPRouter) handleOauthAuthorizationServer(c *gin.Context) {
 		ResponseModesSupported:            []string{"query"},
 		GrantTypesSupported:               []string{"authorization_code", "refresh_token"},
 		TokenEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post", "none"},
-		CodeChallengeMethodsSupported:     []string{"plain", "S256"},
+		CodeChallengeMethodsSupported:     []string{"S256"},
 	}
 	c.JSON(200, res)
 }
