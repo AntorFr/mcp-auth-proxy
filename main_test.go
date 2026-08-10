@@ -440,6 +440,9 @@ func TestNewRootCommand_HTTPStreamingOnlyFlag(t *testing.T) {
 		httpStreamingOnly bool,
 		headerMapping map[string]string,
 		headerMappingBase string,
+		trustedTokenIssuer string,
+		trustedTokenJWKSURI string,
+		trustedTokenAudience string,
 	) error {
 		streamingOnly = httpStreamingOnly
 		receivedTargets = proxyTarget
@@ -508,6 +511,9 @@ func TestNewRootCommand_HTTPStreamingOnlyFromEnv(t *testing.T) {
 		httpStreamingOnly bool,
 		headerMapping map[string]string,
 		headerMappingBase string,
+		trustedTokenIssuer string,
+		trustedTokenJWKSURI string,
+		trustedTokenAudience string,
 	) error {
 		streamingOnly = httpStreamingOnly
 		return nil
@@ -572,6 +578,9 @@ func TestNewRootCommand_ForwardAuthorizationFlag(t *testing.T) {
 		httpStreamingOnly bool,
 		headerMapping map[string]string,
 		headerMappingBase string,
+		trustedTokenIssuer string,
+		trustedTokenJWKSURI string,
+		trustedTokenAudience string,
 	) error {
 		forwardAuthorization = forwardAuthorizationHeader
 		return nil
@@ -636,6 +645,9 @@ func TestNewRootCommand_ForwardAuthorizationFromEnv(t *testing.T) {
 		httpStreamingOnly bool,
 		headerMapping map[string]string,
 		headerMappingBase string,
+		trustedTokenIssuer string,
+		trustedTokenJWKSURI string,
+		trustedTokenAudience string,
 	) error {
 		forwardAuthorization = forwardAuthorizationHeader
 		return nil

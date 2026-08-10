@@ -26,6 +26,7 @@ import (
 	"github.com/sigbit/mcp-auth-proxy/v2/pkg/proxy"
 	"github.com/sigbit/mcp-auth-proxy/v2/pkg/repository"
 	"github.com/sigbit/mcp-auth-proxy/v2/pkg/tlsreload"
+	"github.com/sigbit/mcp-auth-proxy/v2/pkg/trusted"
 	"github.com/sigbit/mcp-auth-proxy/v2/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/acme"
@@ -81,6 +82,9 @@ func Run(
 	httpStreamingOnly bool,
 	headerMapping map[string]string,
 	headerMappingBase string,
+	trustedTokenIssuer string,
+	trustedTokenJWKSURI string,
+	trustedTokenAudience string,
 ) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -301,7 +305,23 @@ func Run(
 	if err != nil {
 		return fmt.Errorf("failed to create IDP router: %w", err)
 	}
-	proxyRouter, err := newProxyRouter(externalURL, beHandler, &privKey.PublicKey, proxyHeadersMap, httpStreamingOnly, forwardAuthorizationHeader, headerMapping, headerMappingBase)
+
+	// Optional trusted external issuer for non-interactive bearer tokens.
+	// The audience defaults to the external URL without its trailing slash,
+	// which is how most IdPs (e.g. Authelia) spell configured audiences.
+	var trustedValidator *trusted.Validator
+	if trustedTokenIssuer != "" {
+		audience := trustedTokenAudience
+		if audience == "" {
+			audience = strings.TrimSuffix(externalURL, "/")
+		}
+		trustedValidator, err = trusted.NewValidator(trustedTokenIssuer, trustedTokenJWKSURI, audience, logger)
+		if err != nil {
+			return fmt.Errorf("failed to create trusted token validator: %w", err)
+		}
+	}
+
+	proxyRouter, err := newProxyRouter(externalURL, beHandler, &privKey.PublicKey, proxyHeadersMap, httpStreamingOnly, forwardAuthorizationHeader, headerMapping, headerMappingBase, trustedValidator)
 	if err != nil {
 		return fmt.Errorf("failed to create proxy router: %w", err)
 	}

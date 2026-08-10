@@ -39,6 +39,41 @@ That's it! Your HTTP endpoint is now available at `https://{your-domain}/mcp`.
 
 > Already have certificates? Pass `--tls-cert-file` and `--tls-key-file` instead of `--tls-accept-tos`.
 
+## Trusted external issuer (machine-to-machine)
+
+Interactive clients authenticate through the proxy's built-in OAuth flow.
+Headless workloads (agents, schedulers, CI) cannot complete a browser login;
+for those you can declare a **trusted external OIDC issuer** whose bearer
+JWTs are accepted directly, in addition to the proxy's own tokens:
+
+```sh
+./mcp-auth-proxy \
+  --external-url https://mcp.example.com \
+  --trusted-token-issuer https://auth.example.com \
+  ...
+```
+
+A bearer token is then accepted when all of the following hold:
+
+- it is signed by the issuer (validated against its JWKS, discovered via
+  `/.well-known/openid-configuration` or overridden with
+  `--trusted-token-jwks-uri`);
+- its `iss` claim equals `--trusted-token-issuer` exactly;
+- its `aud` claim contains `--trusted-token-audience` (default: the external
+  URL without its trailing slash) — mint one token per protected service so a
+  leaked token cannot be replayed elsewhere;
+- it carries a valid, unexpired `exp` claim. Only asymmetric signatures
+  (RS256/PS256/ES256) are accepted.
+
+Claims of trusted tokens are flat (there is no `userinfo` wrapper), so if you
+use `--header-mapping` with such tokens, set `--header-mapping-base /`.
+
+| Flag | Env | Description |
+|------|-----|-------------|
+| `--trusted-token-issuer` | `TRUSTED_TOKEN_ISSUER` | Issuer URL. Empty (default) disables the feature |
+| `--trusted-token-jwks-uri` | `TRUSTED_TOKEN_JWKS_URI` | JWKS override; discovered from issuer metadata when empty |
+| `--trusted-token-audience` | `TRUSTED_TOKEN_AUDIENCE` | Required audience; defaults to the external URL without trailing slash |
+
 ## Why not MCP Gateway?
 
 mcp-auth-proxy: **A lightweight proxy that adds authentication to any MCP server** (optional stdio→HTTP(S) conversion)  

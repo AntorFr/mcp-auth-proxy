@@ -167,6 +167,9 @@ type proxyRunnerFunc func(
 	httpStreamingOnly bool,
 	headerMapping map[string]string,
 	headerMappingBase string,
+	trustedTokenIssuer string,
+	trustedTokenJWKSURI string,
+	trustedTokenAudience string,
 ) error
 
 func main() {
@@ -218,6 +221,9 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	var headerMappingBase string
 	var httpStreamingOnly bool
 	var trustedProxies string
+	var trustedTokenIssuer string
+	var trustedTokenJWKSURI string
+	var trustedTokenAudience string
 
 	rootCmd := &cobra.Command{
 		Use: "mcp-warp",
@@ -290,6 +296,9 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 				httpStreamingOnly,
 				headerMappingMap,
 				headerMappingBase,
+				trustedTokenIssuer,
+				trustedTokenJWKSURI,
+				trustedTokenAudience,
 			); err != nil {
 				panic(err)
 			}
@@ -348,6 +357,11 @@ func newRootCommand(run proxyRunnerFunc) *cobra.Command {
 	rootCmd.Flags().BoolVar(&httpStreamingOnly, "http-streaming-only", getEnvBoolWithDefault("HTTP_STREAMING_ONLY", false), "Reject SSE (GET) requests and keep the backend in HTTP streaming-only mode")
 	rootCmd.Flags().StringVar(&headerMapping, "header-mapping", getEnvWithDefault("HEADER_MAPPING", ""), "Comma-separated mapping of JSON pointer paths to header names (e.g., /email:X-Forwarded-Email,/preferred_username:X-Forwarded-User)")
 	rootCmd.Flags().StringVar(&headerMappingBase, "header-mapping-base", getEnvWithDefault("HEADER_MAPPING_BASE", "/userinfo"), "JSON pointer base path for header mapping claims lookup (e.g., /userinfo or /)")
+
+	// Trusted external issuer (non-interactive bearer tokens)
+	rootCmd.Flags().StringVar(&trustedTokenIssuer, "trusted-token-issuer", getEnvWithDefault("TRUSTED_TOKEN_ISSUER", ""), "OIDC issuer whose bearer JWTs are accepted directly (machine-to-machine), e.g. https://auth.example.com. Empty disables the feature")
+	rootCmd.Flags().StringVar(&trustedTokenJWKSURI, "trusted-token-jwks-uri", getEnvWithDefault("TRUSTED_TOKEN_JWKS_URI", ""), "JWKS URI of the trusted issuer. Discovered from the issuer's OIDC metadata when empty")
+	rootCmd.Flags().StringVar(&trustedTokenAudience, "trusted-token-audience", getEnvWithDefault("TRUSTED_TOKEN_AUDIENCE", ""), "Audience required in trusted bearer tokens. Defaults to the external URL without its trailing slash")
 
 	return rootCmd
 }

@@ -7,6 +7,7 @@ require (
 	github.com/gin-contrib/sessions v1.1.0
 	github.com/gin-contrib/zap v1.1.7
 	github.com/gin-gonic/gin v1.12.0
+	github.com/go-jose/go-jose/v3 v3.0.5
 	github.com/gobwas/glob v0.2.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/mark3labs/mcp-go v0.50.0
@@ -43,7 +44,6 @@ require (
 	github.com/fsnotify/fsnotify v1.10.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/gin-contrib/sse v1.1.1 // indirect
-	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

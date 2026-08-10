@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	jose "github.com/go-jose/go-jose/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/sigbit/mcp-auth-proxy/v2/pkg/trusted"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +49,7 @@ func TestProxyRouter_RejectsWrongIssuerOrAudience(t *testing.T) {
 	privateKey, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)
 
-	proxyRouter, err := NewProxyRouter("https://example.com", http.NotFoundHandler(), publicKey, http.Header{}, false, false, nil, "/userinfo")
+	proxyRouter, err := NewProxyRouter("https://example.com", http.NotFoundHandler(), publicKey, http.Header{}, false, false, nil, "/userinfo", nil)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -127,7 +129,7 @@ func TestProxyRouter_HandleProxy_ValidToken(t *testing.T) {
 	proxyHeaders := make(http.Header)
 	proxyHeaders.Set("X-Forwarded-By", "mcp-auth-proxy")
 
-	proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, proxyHeaders, false, false, nil, "/userinfo")
+	proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, proxyHeaders, false, false, nil, "/userinfo", nil)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -220,7 +222,7 @@ func TestProxyRouter_HeaderMapping(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, tt.headerMapping, "/userinfo")
+			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, tt.headerMapping, "/userinfo", nil)
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -350,7 +352,7 @@ func TestProxyRouter_HeaderMappingBase(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, tt.headerMapping, tt.headerMappingBase)
+			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, tt.headerMapping, tt.headerMappingBase, nil)
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -389,7 +391,7 @@ func TestProxyRouter_AuthorizationHeaderDefaultBehavior(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 
-		proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, nil, "/userinfo")
+		proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, nil, "/userinfo", nil)
 		require.NoError(t, err)
 
 		gin.SetMode(gin.TestMode)
@@ -421,7 +423,7 @@ func TestProxyRouter_AuthorizationHeaderDefaultBehavior(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		})
 
-		proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, true, nil, "/userinfo")
+		proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, true, nil, "/userinfo", nil)
 		require.NoError(t, err)
 
 		gin.SetMode(gin.TestMode)
@@ -531,7 +533,7 @@ func TestProxyRouter_HeaderMappingStripsClientHeaders(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, tt.headerMapping, tt.headerMappingBase)
+			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, false, false, tt.headerMapping, tt.headerMappingBase, nil)
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -566,7 +568,7 @@ func TestProxyRouter_ProtectedResourceTrailingSlash(t *testing.T) {
 	_, publicKey, err := generateRSAKeyPair()
 	require.NoError(t, err)
 
-	proxyRouter, err := NewProxyRouter("https://example.com/", http.NotFoundHandler(), publicKey, http.Header{}, false, false, nil, "/userinfo")
+	proxyRouter, err := NewProxyRouter("https://example.com/", http.NotFoundHandler(), publicKey, http.Header{}, false, false, nil, "/userinfo", nil)
 	require.NoError(t, err)
 
 	gin.SetMode(gin.TestMode)
@@ -670,7 +672,7 @@ func TestProxyRouter_HTTPStreamingOnlyRejectsSSE(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 
-			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, tt.streamingOnly, false, nil, "/userinfo")
+			proxyRouter, err := NewProxyRouter("https://example.com", proxyHandler, publicKey, http.Header{}, tt.streamingOnly, false, nil, "/userinfo", nil)
 			require.NoError(t, err)
 
 			gin.SetMode(gin.TestMode)
@@ -696,4 +698,132 @@ func TestProxyRouter_HTTPStreamingOnlyRejectsSSE(t *testing.T) {
 			assert.Equal(t, tt.expectBackend, backendCalled, "backend call mismatch")
 		})
 	}
+}
+
+// --- Trusted external issuer fallback ---------------------------------------
+
+func newTrustedIssuer(t *testing.T) (*httptest.Server, *rsa.PrivateKey) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	mux := http.NewServeMux()
+	var server *httptest.Server
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"jwks_uri": server.URL + "/jwks.json"})
+	})
+	mux.HandleFunc("/jwks.json", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{
+			{Key: &key.PublicKey, KeyID: "trusted-kid", Use: "sig", Algorithm: "RS256"},
+		}})
+	})
+	server = httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	return server, key
+}
+
+func signTrusted(t *testing.T, key *rsa.PrivateKey, claims jwt.MapClaims) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = "trusted-kid"
+	signed, err := token.SignedString(key)
+	require.NoError(t, err)
+	return signed
+}
+
+func TestProxyRouter_TrustedIssuerFallback(t *testing.T) {
+	localKey, localPublicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	issuer, issuerKey := newTrustedIssuer(t)
+	validator, err := trusted.NewValidator(issuer.URL, "", "https://example.com", nil)
+	require.NoError(t, err)
+
+	var gotSub string
+	backendHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSub = r.Header.Get("X-Trusted-Sub")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"message": "ok"}`)
+	})
+
+	proxyRouter, err := NewProxyRouter("https://example.com", backendHandler, localPublicKey, http.Header{}, false, false, map[string]string{"/sub": "X-Trusted-Sub"}, "/", validator)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxyRouter.SetupRoutes(router)
+
+	trustedClaims := func() jwt.MapClaims {
+		return jwt.MapClaims{
+			"iss": issuer.URL,
+			"aud": "https://example.com",
+			"sub": "machine-client",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		}
+	}
+
+	t.Run("accepts trusted issuer token and maps claims to headers", func(t *testing.T) {
+		gotSub = ""
+		req := httptest.NewRequest(http.MethodGet, "/some/path", nil)
+		req.Header.Set("Authorization", "Bearer "+signTrusted(t, issuerKey, trustedClaims()))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "machine-client", gotSub)
+	})
+
+	t.Run("still accepts self-issued token", func(t *testing.T) {
+		selfToken, err := createJWT(localKey, jwt.MapClaims{
+			"sub": "human-user",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		})
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodGet, "/some/path", nil)
+		req.Header.Set("Authorization", "Bearer "+selfToken)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("rejects trusted token with wrong audience", func(t *testing.T) {
+		claims := trustedClaims()
+		claims["aud"] = "https://other.example.com"
+		req := httptest.NewRequest(http.MethodGet, "/some/path", nil)
+		req.Header.Set("Authorization", "Bearer "+signTrusted(t, issuerKey, claims))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("rejects garbage token", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/some/path", nil)
+		req.Header.Set("Authorization", "Bearer not-a-token")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+}
+
+func TestProxyRouter_TrustedTokenRejectedWithoutValidator(t *testing.T) {
+	_, localPublicKey, err := generateRSAKeyPair()
+	require.NoError(t, err)
+
+	issuer, issuerKey := newTrustedIssuer(t)
+
+	proxyRouter, err := NewProxyRouter("https://example.com", http.NotFoundHandler(), localPublicKey, http.Header{}, false, false, nil, "/userinfo", nil)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	proxyRouter.SetupRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/some/path", nil)
+	req.Header.Set("Authorization", "Bearer "+signTrusted(t, issuerKey, jwt.MapClaims{
+		"iss": issuer.URL,
+		"aud": "https://example.com",
+		"sub": "machine-client",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }

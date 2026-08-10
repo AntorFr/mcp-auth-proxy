@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mattn/go-jsonpointer"
+	"github.com/sigbit/mcp-auth-proxy/v2/pkg/trusted"
 )
 
 type ProxyRouter struct {
@@ -20,6 +21,7 @@ type ProxyRouter struct {
 	forwardAuthorizationHeader bool
 	headerMapping              map[string]string
 	headerMappingBase          string
+	trustedValidator           *trusted.Validator
 }
 
 func NewProxyRouter(
@@ -31,6 +33,7 @@ func NewProxyRouter(
 	forwardAuthorizationHeader bool,
 	headerMapping map[string]string,
 	headerMappingBase string,
+	trustedValidator *trusted.Validator,
 ) (*ProxyRouter, error) {
 	return &ProxyRouter{
 		externalURL:                externalURL,
@@ -41,6 +44,7 @@ func NewProxyRouter(
 		forwardAuthorizationHeader: forwardAuthorizationHeader,
 		headerMapping:              headerMapping,
 		headerMappingBase:          headerMappingBase,
+		trustedValidator:           trustedValidator,
 	}, nil
 }
 
@@ -82,8 +86,18 @@ func (p *ProxyRouter) handleProxy(c *gin.Context) {
 	}, jwt.WithIssuer(p.externalURL), jwt.WithAudience(p.externalURL))
 
 	if err != nil || !token.Valid {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
-		return
+		// Not one of our own tokens: fall back to the trusted external
+		// issuer (non-interactive machine-to-machine clients), if any.
+		if p.trustedValidator == nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			return
+		}
+		trustedClaims, trustedErr := p.trustedValidator.Validate(c.Request.Context(), bearerToken)
+		if trustedErr != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			return
+		}
+		claims = trustedClaims
 	}
 
 	if p.httpStreamingOnly && isSSEGetRequest(c.Request) {
