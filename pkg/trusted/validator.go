@@ -71,8 +71,15 @@ func NewValidator(issuer, jwksURI, audience string, logger *zap.Logger) (*Valida
 	}, nil
 }
 
+// clockLeeway absorbs clock skew between the issuer and this proxy. Tokens
+// are often presented within the same second they are minted (a workload
+// refreshes its token right before connecting); without leeway a validator
+// clock trailing the issuer's rejects them on nbf/iat.
+const clockLeeway = 60 * time.Second
+
 // Validate parses and verifies a bearer token: signature against the JWKS,
 // issuer, audience and expiry. It returns the token claims on success.
+// Rejections are logged at warn level (reason only, never the token).
 func (v *Validator) Validate(ctx context.Context, tokenString string) (jwt.MapClaims, error) {
 	claims := jwt.MapClaims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
@@ -83,11 +90,14 @@ func (v *Validator) Validate(ctx context.Context, tokenString string) (jwt.MapCl
 		jwt.WithIssuer(v.issuer),
 		jwt.WithAudience(v.audience),
 		jwt.WithExpirationRequired(),
+		jwt.WithLeeway(clockLeeway),
 	)
 	if err != nil {
+		v.logger.Warn("trusted token rejected", zap.Error(err))
 		return nil, err
 	}
 	if !token.Valid {
+		v.logger.Warn("trusted token rejected", zap.String("reason", "token invalid"))
 		return nil, fmt.Errorf("invalid token")
 	}
 	return claims, nil
